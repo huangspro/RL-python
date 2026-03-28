@@ -90,11 +90,12 @@ for i in range(0, 2):
     tem = 0
     episode_over = False
     current_obs = transform(observation).unsqueeze(0).to(device)
+    R = 0
     while not episode_over:
         # take an action
         output = torch.nn.functional.softmax(PI_model(current_obs), dim = 1)
         m = torch.distributions.Categorical(output)
-        action_index = m.sample()
+        action_index = m.sample().item()
         action = 0
         if action_index == 0:
             action = numpy.array([1,0.3,0])
@@ -106,17 +107,18 @@ for i in range(0, 2):
             action = numpy.array([0,0.3,1])
         action_prob = output[0][action_index]
         observation, reward, terminated, truncated, info = env.step(action)
-        reward *= 20
+        R += reward
         if tem>800:
             break
         next_state = transform(observation).unsqueeze(0).to(device)
-        current_value = V_model(current_obs)  #the state value
-        next_value = V_model(next_state)  #the state value of next state
+        current_value = V_model(current_obs).squeeze()  #the state value
+        next_value = V_model(next_state).squeeze().detach()  #the state value of next state
         
-        advantage = (reward + discounted * next_value.detach()[0][0] - current_value[0][0]).squeeze()
-        advantage = torch.clamp(advantage, -0.2, 0.2)
-        loss1 = advantage.pow(2).mean()
-        loss2 = -advantage.detach()*torch.log(action_prob[0].squeeze())
+        advantage = reward + discounted * next_value - current_value
+        target = reward + discounted * next_value
+        loss1 = (current_value - target.detach())**2
+        entropy = -torch.sum(output * torch.log(output + 1e-8))
+        loss2 = -advantage.detach() * torch.log(action_prob + 1e-8) - 0.01 * entropy
         
         # 更新值网络
         optimizer_V.zero_grad()
@@ -136,5 +138,6 @@ for i in range(0, 2):
         tem += 1
     torch.save(PI_model, "carracing/PI_model.pth")
     torch.save(V_model, "carracing/V_model.pth")   
+    print(R)
 env.close()
 
