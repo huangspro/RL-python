@@ -86,58 +86,82 @@ optimizer_PI = torch.optim.Adam(PI_model.parameters(), lr = learning_rate)
 optimizer_V = torch.optim.Adam(V_model.parameters(), lr = learning_rate)
 env = gym.make("CarRacing-v3", render_mode="human")
 for i in range(0, 2):
+    #collect an episode
+    state, A, R, action_prob = [], [], [], 0
     observation, _ = env.reset(seed=42)
-    tem = 0
+    state.append(observation)
     episode_over = False
-    current_obs = transform(observation).unsqueeze(0).to(device)
-    R = 0
     while not episode_over:
-        # take an action
-        output = torch.nn.functional.softmax(PI_model(current_obs), dim = 1)
+        output = torch.nn.functional.softmax(PI_model(transform(observation).unsqueeze(0).to(device)), dim = 1)
         m = torch.distributions.Categorical(output)
         action_index = m.sample().item()
         action = 0
         if action_index == 0:
-            action = numpy.array([1,0.3,0])
+            action = numpy.array([1,1,0])
         elif action_index == 1:
-            action = numpy.array([-1,0.3,0])
+            action = numpy.array([-1,1,0])
         elif action_index == 2:
             action = numpy.array([0,1,0])
         elif action_index == 3:
-            action = numpy.array([0,0.3,1])
-        action_prob = output[0][action_index]
-        observation, reward, terminated, truncated, info = env.step(action)
-        R += reward
-        if tem>800:
-            break
-        next_state = transform(observation).unsqueeze(0).to(device)
-        current_value = V_model(current_obs).squeeze()  #the state value
-        next_value = V_model(next_state).squeeze().detach()  #the state value of next state
-        
-        advantage = reward + discounted * next_value - current_value
-        target = reward + discounted * next_value
-        loss1 = (current_value - target.detach())**2
-        entropy = -torch.sum(output * torch.log(output + 1e-8))
-        loss2 = -advantage.detach() * torch.log(action_prob + 1e-8) - 0.01 * entropy
-        
-        # 更新值网络
-        optimizer_V.zero_grad()
-        loss1.backward()
-        optimizer_V.step()
-
-        # 更新策略网络
-        optimizer_PI.zero_grad()
-        loss2.backward()
-        optimizer_PI.step()
-        
-        
-        current_obs = next_state
+            action = numpy.array([0,0.3,0.3])
+        A.append(action)
+        observation, reward, terminated, truncated, _ = env.step(action)
+        state.append(observation)
+        R.append(reward)
         episode_over = terminated or truncated  
-        if terminated or truncated:
-            observation, info = env.reset()
-        tem += 1
-    torch.save(PI_model, "carracing/PI_model.pth")
-    torch.save(V_model, "carracing/V_model.pth")   
-    print(R)
+        if episode_over:
+            action_prob += torch.log(output[0][action_index])
+        else:
+            action_prob += torch.log(output[0][action_index]).detach()
+    
+    print(len(state), len(A))
+    
+    next_state = torch.stack([transform(state[ii+1]) for ii in range(len(state)-1)]).to(device)
+    state.pop()
+    state = torch.stack([transform(ii) for ii in state]).to(device)
+    R = torch.tensor(R).to(device)
+    
+    print(next_state.shape, state.shape)
+    
+    advantage = R + discounted * V_model(next_state) - V_model(state)
+    loss1 = torch.mean(advantage**2)
+    loss2 = torch.mean(-advantage.detach() * action_prob)
+    
+    optimizer_V.zero_grad()
+    loss1.backward()
+    optimizer_V.step()
+
+    optimizer_PI.zero_grad()
+    loss2.backward()
+    optimizer_PI.step()
+    
 env.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
