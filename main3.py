@@ -8,48 +8,13 @@ device = torch.device("cuda")
 learning_rate = 1e-4
 discounted = 0.99
 
-transform = torchvision.transforms.Compose([
-    torchvision.transforms.ToPILImage(),
-    torchvision.transforms.Resize((224, 224)),
-    torchvision.transforms.ToTensor(),
-    torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]),
-])
-
-if os.path.exists("carracing/PI_model.pth"):
-    PI_model = torch.load("carracing/PI_model.pth", weights_only=False)
-else:
-    PI_model = torchvision.models.resnet18(pretrained=True)
-
-PI_model.fc = torch.nn.Linear(PI_model.fc.in_features, 4)
-PI_model = PI_model.to(device)
-
-if os.path.exists("carracing/V_model.pth"):
-    V_model = torch.load("carracing/V_model.pth", weights_only=False)
-else:
-    V_model = torchvision.models.resnet18(pretrained=True)
-
-V_model.fc = torch.nn.Linear(V_model.fc.in_features, 1)
-V_model = V_model.to(device)
-'''
 class PI(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = torch.nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = torch.nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = torch.nn.Conv2d(64, 1, kernel_size=3, stride=1, padding=1)
-        
-        self.linear1 = torch.nn.Linear(24*24, 256)
+        self.linear1 = torch.nn.Linear(44, 256)
         self.linear2 = torch.nn.Linear(256, 128)
-        self.linear3 = torch.nn.Linear(128, 4)
+        self.linear3 = torch.nn.Linear(128, 16)
     def forward(self, x):  
-        x = self.conv1(x)
-        x = torch.nn.functional.max_pool2d(x, kernel_size = 2, stride = 2)
-        x = self.conv2(x)
-        x = torch.nn.functional.max_pool2d(x, kernel_size = 2, stride = 2)
-        x = self.conv3(x)
-        x = torch.flatten(x, start_dim=1)
-        
         x = torch.nn.functional.relu(self.linear1(x))
         x = torch.nn.functional.relu(self.linear2(x))
         x = self.linear3(x)
@@ -58,33 +23,39 @@ class PI(torch.nn.Module):
 class V(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = torch.nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = torch.nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = torch.nn.Conv2d(64, 1, kernel_size=3, stride=1, padding=1)
-        
-        self.linear1 = torch.nn.Linear(24*24, 256)
+        self.linear1 = torch.nn.Linear(44, 256)
         self.linear2 = torch.nn.Linear(256, 128)
-        self.linear3 = torch.nn.Linear(128, 1)  #one output, represtenting the state value   
+        self.linear3 = torch.nn.Linear(128, 1)
     def forward(self, x):  
-        x = self.conv1(x)
-        x = torch.nn.functional.max_pool2d(x, kernel_size = 2, stride = 2)
-        x = self.conv2(x)
-        x = torch.nn.functional.max_pool2d(x, kernel_size = 2, stride = 2)
-        x = self.conv3(x)
-        
-        x = torch.flatten(x, start_dim=1)
-        
         x = torch.nn.functional.relu(self.linear1(x))
         x = torch.nn.functional.relu(self.linear2(x))
         x = self.linear3(x)
         return x
-        
-PI_model, V_model = PI(), V()
-PI_model, V_model = PI_model.to(device), V_model.to(device)
-'''
+
+if os.path.exists("bot/PI_model.pth"):
+    PI_model = torch.load("bot/PI_model.pth", weights_only=False)
+else:
+    PI_model = PI()
+PI_model = PI_model.to(device)
+
+if os.path.exists("bot/V_model.pth"):
+    V_model = torch.load("bot/V_model.pth", weights_only=False)
+else:
+    V_model = V()
+V_model = V_model.to(device)
+
+
+
+
+
+
+
+
+
+
 optimizer_PI = torch.optim.Adam(PI_model.parameters(), lr = learning_rate)
 optimizer_V = torch.optim.Adam(V_model.parameters(), lr = learning_rate)
-env = gym.make("CarRacing-v3", render_mode="human")
+env = gym.make("Humanoid-v5", render_mode="human")
 temm = 0
 for i in range(0, 5):
     if temm > 400:
@@ -145,8 +116,8 @@ for i in range(0, 5):
     loss2.backward()
     optimizer_PI.step()
     
-    torch.save(PI_model, "carracing/PI_model.pth")
-    torch.save(V_model, "carracing/V_model.pth")   
+    torch.save(PI_model, "bot/PI_model.pth")
+    torch.save(V_model, "bot/V_model.pth")   
     
 env.close()
 
