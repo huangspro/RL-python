@@ -17,15 +17,11 @@ class PI(torch.nn.Module):
         super().__init__()
         self.linear1 = torch.nn.Linear(348, 512)
         self.linear2 = torch.nn.Linear(512, 512)
-        self.linear3 = torch.nn.Linear(512, 512)
-        self.linear4 = torch.nn.Linear(512, 512)
-        self.linear5 = torch.nn.Linear(512, 34)
+        self.linear3 = torch.nn.Linear(512, 34)
     def forward(self, x):  
         x = torch.nn.functional.relu(self.linear1(x))
         x = torch.nn.functional.relu(self.linear2(x))
-        x = torch.nn.functional.relu(self.linear3(x)) 
-        x = torch.nn.functional.relu(self.linear4(x)) 
-        x = self.linear5(x)
+        x = torch.nn.functional.tanh(self.linear3(x))*0.4
         return x
         
 class V(torch.nn.Module):
@@ -33,15 +29,11 @@ class V(torch.nn.Module):
         super().__init__()
         self.linear1 = torch.nn.Linear(348, 512)
         self.linear2 = torch.nn.Linear(512, 512)
-        self.linear3 = torch.nn.Linear(512, 512)
-        self.linear4 = torch.nn.Linear(512, 512)
-        self.linear5 = torch.nn.Linear(512, 1)
+        self.linear3 = torch.nn.Linear(512, 1)
     def forward(self, x):  
         x = torch.nn.functional.relu(self.linear1(x))
         x = torch.nn.functional.relu(self.linear2(x)) 
-        x = torch.nn.functional.relu(self.linear3(x)) 
-        x = torch.nn.functional.relu(self.linear4(x)) 
-        x = self.linear5(x)
+        x = self.linear3(x)
         return x
 if os.path.exists("bot_ppo/PI_model.pth") and os.path.exists("bot_ppo/V_model.pth"):
     PI_model = torch.load("bot_ppo/PI_model.pth", weights_only=False).to(device)
@@ -54,11 +46,11 @@ else:
 
 optimizer_PI = torch.optim.Adam(PI_model.parameters(), lr = learning_rate)
 optimizer_V = torch.optim.Adam(V_model.parameters(), lr = learning_rate)
-env = gym.make("Humanoid-v5", render_mode="human")
+env = gym.make("Humanoid-v5", render_mode=None)
 
-old_action_prob = torch.randn(17).to(device)
+old_action_prob = 1
 epoch = 0
-for i in range(0, 1000):
+for i in range(0, 5000):
     observation, _ = env.reset(seed=42)
     #collect an episode
     state, A, R, action_prob = [], [], [], 0
@@ -97,9 +89,10 @@ for i in range(0, 1000):
     
     advantage = R + discounted * V_model(next_state) - V_model(state)
     loss1 = torch.mean(advantage**2)
-    print(action_prob.shape)
-    loss2 = torch.mean(-advantage.detach() * torch.clamp(action_prob/old_action_prob, 1-0.2, 1+0.2))
-    old_action_prob = action_prob.detach()
+    
+    clip = torch.clamp(action_prob/old_action_prob, 1-0.2, 1+0.2)
+    loss2 = -torch.mean(torch.min(clip*advantage.detach(), advantage.detach()*action_prob/old_action_prob))
+    old_action_prob = action_prob.detach().squeeze()
     
     optimizer_V.zero_grad()
     loss1.backward()

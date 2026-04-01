@@ -9,7 +9,7 @@ import os
 import torch.distributions
 
 device = torch.device("cuda")
-learning_rate = 1e-6
+learning_rate = 1e-1
 discounted = 0.99
 
 class PI(torch.nn.Module):
@@ -18,14 +18,12 @@ class PI(torch.nn.Module):
         self.linear1 = torch.nn.Linear(348, 512)
         self.linear2 = torch.nn.Linear(512, 512)
         self.linear3 = torch.nn.Linear(512, 512)
-        self.linear4 = torch.nn.Linear(512, 512)
-        self.linear5 = torch.nn.Linear(512, 34)
+        self.linear4 = torch.nn.Linear(512, 34)
     def forward(self, x):  
         x = torch.nn.functional.relu(self.linear1(x))
         x = torch.nn.functional.relu(self.linear2(x))
-        x = torch.nn.functional.relu(self.linear3(x)) 
-        x = torch.nn.functional.relu(self.linear4(x)) 
-        x = self.linear5(x)
+        x = torch.nn.functional.relu(self.linear3(x))
+        x = torch.nn.functional.tanh(self.linear4(x))*0.4
         return x
         
 class V(torch.nn.Module):
@@ -34,14 +32,12 @@ class V(torch.nn.Module):
         self.linear1 = torch.nn.Linear(348, 512)
         self.linear2 = torch.nn.Linear(512, 512)
         self.linear3 = torch.nn.Linear(512, 512)
-        self.linear4 = torch.nn.Linear(512, 512)
-        self.linear5 = torch.nn.Linear(512, 1)
+        self.linear4 = torch.nn.Linear(512, 1)
     def forward(self, x):  
         x = torch.nn.functional.relu(self.linear1(x))
-        x = torch.nn.functional.relu(self.linear2(x)) 
-        x = torch.nn.functional.relu(self.linear3(x)) 
-        x = torch.nn.functional.relu(self.linear4(x)) 
-        x = self.linear5(x)
+        x = torch.nn.functional.relu(self.linear2(x))
+        x = torch.nn.functional.relu(self.linear3(x))
+        x = self.linear4(x)
         return x
 if os.path.exists("bot/PI_model.pth") and os.path.exists("bot/V_model.pth"):
     PI_model = torch.load("bot/PI_model.pth", weights_only=False).to(device)
@@ -54,11 +50,13 @@ else:
 
 optimizer_PI = torch.optim.Adam(PI_model.parameters(), lr = learning_rate)
 optimizer_V = torch.optim.Adam(V_model.parameters(), lr = learning_rate)
-env = gym.make("Humanoid-v5", render_mode="human")
+env = gym.make("Humanoid-v5", render_mode=None)
 
 
 epoch = 0
-for i in range(0, 1000):
+total_reward = 0.01
+total_number = 0.01
+for i in range(0, 5000):
     observation, _ = env.reset(seed=42)
     #collect an episode
     state, A, R, action_prob = [], [], [], 0
@@ -82,7 +80,13 @@ for i in range(0, 1000):
         if episode_over:
             observation, _ = env.reset(seed=42)
         stepp += 1
-    print(sum(R), stepp)
+    total_number += 1
+    total_reward += sum(R)
+    if epoch%500 == 0:
+        print(total_reward/total_number)
+        total_reward = 0
+        total_number = 0
+        
     next_state = torch.stack([torch.tensor(state[ii+1], dtype=torch.float32) for ii in range(len(state)-1)]).to(device)
     state.pop()
     state = torch.stack([torch.tensor(ii, dtype=torch.float32) for ii in state]).to(device)
@@ -91,13 +95,14 @@ for i in range(0, 1000):
     mu = output[:, :17]
     div = torch.nn.functional.softplus(output[:, 17:]) + 1e-5
     dist = torch.distributions.Normal(mu, div)
+    entropy = dist.entropy().sum(dim=-1)
     action = dist.rsample()
     action_prob = dist.log_prob(action).sum(-1)
     
     
     advantage = R + discounted * V_model(next_state) - V_model(state)
     loss1 = torch.mean(advantage**2)
-    loss2 = torch.mean(-advantage.detach() * action_prob)
+    loss2 = torch.mean(-advantage.detach() * action_prob) - 3.6*entropy
     
     optimizer_V.zero_grad()
     loss1.backward()
@@ -109,7 +114,7 @@ for i in range(0, 1000):
     
     epoch += 1
     
-    if epoch%50 == 0:
+    if epoch%500 == 0:
         torch.save(PI_model, "bot/PI_model.pth")
         torch.save(V_model, "bot/V_model.pth")   
         
