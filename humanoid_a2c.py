@@ -9,7 +9,7 @@ import os
 import torch.distributions
 
 device = torch.device("cuda")
-learning_rate = 1e-1
+learning_rate = 2e-4
 discounted = 0.99
 
 class PI(torch.nn.Module):
@@ -23,7 +23,7 @@ class PI(torch.nn.Module):
         x = torch.nn.functional.relu(self.linear1(x))
         x = torch.nn.functional.relu(self.linear2(x))
         x = torch.nn.functional.relu(self.linear3(x))
-        x = torch.nn.functional.tanh(self.linear4(x))*0.4
+        x = torch.nn.functional.tanh(self.linear4(x))
         return x
         
 class V(torch.nn.Module):
@@ -48,8 +48,8 @@ else:
 
 
 
-optimizer_PI = torch.optim.Adam(PI_model.parameters(), lr = learning_rate)
-optimizer_V = torch.optim.Adam(V_model.parameters(), lr = learning_rate)
+optimizer_PI = torch.optim.SGD(PI_model.parameters(), lr = learning_rate)
+optimizer_V = torch.optim.SGD(V_model.parameters(), lr = learning_rate)
 env = gym.make("Humanoid-v5", render_mode=None)
 
 
@@ -57,7 +57,7 @@ epoch = 0
 total_reward = 0.01
 total_number = 0.01
 for i in range(0, 5000):
-    observation, _ = env.reset(seed=42)
+    observation, _ = env.reset()
     #collect an episode
     state, A, R, action_prob = [], [], [], 0
     episode_over = False
@@ -78,7 +78,7 @@ for i in range(0, 5000):
         R.append(reward)
         episode_over = terminated or truncated
         if episode_over:
-            observation, _ = env.reset(seed=42)
+            observation, _ = env.reset()
         stepp += 1
     total_number += 1
     total_reward += sum(R)
@@ -102,7 +102,7 @@ for i in range(0, 5000):
     
     advantage = R + discounted * V_model(next_state) - V_model(state)
     loss1 = torch.mean(advantage**2)
-    loss2 = torch.mean(-advantage.detach() * action_prob) - 3.6*entropy
+    loss2 = torch.mean(-advantage.detach() * action_prob) - 0.5*entropy
     
     optimizer_V.zero_grad()
     loss1.backward()
