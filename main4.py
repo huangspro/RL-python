@@ -1,4 +1,4 @@
-#actor-critic version
+#ppo version
 
 
 import gymnasium as gym
@@ -43,9 +43,9 @@ class V(torch.nn.Module):
         x = torch.nn.functional.relu(self.linear4(x)) 
         x = self.linear5(x)
         return x
-if os.path.exists("bot/PI_model.pth") and os.path.exists("bot/V_model.pth"):
-    PI_model = torch.load("bot/PI_model.pth", weights_only=False).to(device)
-    V_model = torch.load("bot/V_model.pth", weights_only=False).to(device)
+if os.path.exists("bot_ppo/PI_model.pth") and os.path.exists("bot_ppo/V_model.pth"):
+    PI_model = torch.load("bot_ppo/PI_model.pth", weights_only=False).to(device)
+    V_model = torch.load("bot_ppo/V_model.pth", weights_only=False).to(device)
 else:
     PI_model = PI().to(device)
     V_model = V().to(device)
@@ -56,7 +56,7 @@ optimizer_PI = torch.optim.Adam(PI_model.parameters(), lr = learning_rate)
 optimizer_V = torch.optim.Adam(V_model.parameters(), lr = learning_rate)
 env = gym.make("Humanoid-v5", render_mode="human")
 
-
+old_action_prob = torch.randn(17).to(device)
 epoch = 0
 for i in range(0, 1000):
     observation, _ = env.reset(seed=42)
@@ -97,7 +97,9 @@ for i in range(0, 1000):
     
     advantage = R + discounted * V_model(next_state) - V_model(state)
     loss1 = torch.mean(advantage**2)
-    loss2 = torch.mean(-advantage.detach() * action_prob)
+    print(action_prob.shape)
+    loss2 = torch.mean(-advantage.detach() * torch.clamp(action_prob/old_action_prob, 1-0.2, 1+0.2))
+    old_action_prob = action_prob.detach()
     
     optimizer_V.zero_grad()
     loss1.backward()
@@ -110,8 +112,8 @@ for i in range(0, 1000):
     epoch += 1
     
     if epoch%50 == 0:
-        torch.save(PI_model, "bot/PI_model.pth")
-        torch.save(V_model, "bot/V_model.pth")   
+        torch.save(PI_model, "bot_ppo/PI_model.pth")
+        torch.save(V_model, "bot_ppo/V_model.pth")   
         
 env.close()
 
