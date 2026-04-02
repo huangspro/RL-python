@@ -9,7 +9,7 @@ import os
 import torch.distributions
 
 device = torch.device("cuda")
-learning_rate = 2e-4
+learning_rate = 2e-6
 discounted = 0.99
 
 class PI(torch.nn.Module):
@@ -50,74 +50,53 @@ else:
 
 optimizer_PI = torch.optim.SGD(PI_model.parameters(), lr = learning_rate)
 optimizer_V = torch.optim.SGD(V_model.parameters(), lr = learning_rate)
-env = gym.make("Humanoid-v5", render_mode=None)
+env = gym.make("Humanoid-v5", render_mode="human")
 
 
 epoch = 0
 total_reward = 0.01
 total_number = 0.01
-for i in range(0, 5000):
+r = 0
+for i in range(0, 1000):
     observation, _ = env.reset()
-    #collect an episode
-    state, A, R, action_prob = [], [], [], 0
     episode_over = False
-    state.append(observation)
-    stepp = 0
-    
+
     
     while not episode_over:
-        output = PI_model(torch.tensor(observation, dtype=torch.float32).unsqueeze(0).to(device))
-        mu = output[:, :17]
-        div = torch.nn.functional.softplus(output[:, 17:]) + 1e-5
+        #observe and sample the actions
+        output = PI_model(torch.tensor(observation, dtype=torch.float32).to(device))
+        Value = V_model(torch.tensor(observation, dtype=torch.float32).to(device))
+        mu = output[:17]
+        div = torch.nn.functional.softplus(output[17:]) + 1e-5
         
         dist = torch.distributions.Normal(mu, div)
         action = dist.sample()
-        A.append(action)
-        observation, reward, terminated, truncated, _ = env.step(action.detach().cpu().numpy()[0])
-        state.append(observation)
-        R.append(reward)
+        entropy = dist.entropy().sum()
+        action_prob = dist.log_prob(action).sum()
+        #remember the state and actions
+        observation, reward, terminated, truncated, _ = env.step(action.detach().cpu().numpy())
+        r += reward
+        advantage = reward + discounted * V_model(torch.tensor(observation, dtype=torch.float32).to(device)).detach() - Value
+        loss1 = torch.mean(advantage**2)
+        loss2 = (-advantage.detach() * action_prob) - 0.5*entropy
+        
+        optimizer_V.zero_grad()
+        loss1.backward()
+        optimizer_V.step()
+
+        optimizer_PI.zero_grad()
+        loss2.backward()
+        optimizer_PI.step()
+        
         episode_over = terminated or truncated
         if episode_over:
             observation, _ = env.reset()
-        stepp += 1
-    total_number += 1
-    total_reward += sum(R)
-    if epoch%500 == 0:
-        print(total_reward/total_number)
-        total_reward = 0
-        total_number = 0
-        
-    next_state = torch.stack([torch.tensor(state[ii+1], dtype=torch.float32) for ii in range(len(state)-1)]).to(device)
-    state.pop()
-    state = torch.stack([torch.tensor(ii, dtype=torch.float32) for ii in state]).to(device)
-    R = torch.tensor(R, dtype=torch.float32).to(device)
-    output = PI_model(torch.tensor(observation, dtype=torch.float32).unsqueeze(0).to(device))
-    mu = output[:, :17]
-    div = torch.nn.functional.softplus(output[:, 17:]) + 1e-5
-    dist = torch.distributions.Normal(mu, div)
-    entropy = dist.entropy().sum(dim=-1)
-    action = dist.rsample()
-    action_prob = dist.log_prob(action).sum(-1)
-    
-    
-    advantage = R + discounted * V_model(next_state) - V_model(state)
-    loss1 = torch.mean(advantage**2)
-    loss2 = torch.mean(-advantage.detach() * action_prob) - 0.5*entropy
-    
-    optimizer_V.zero_grad()
-    loss1.backward()
-    optimizer_V.step()
-
-    optimizer_PI.zero_grad()
-    loss2.backward()
-    optimizer_PI.step()
-    
     epoch += 1
-    
-    if epoch%500 == 0:
+    if epoch%100 == 0:
         torch.save(PI_model, "bot/PI_model.pth")
         torch.save(V_model, "bot/V_model.pth")   
-        
+        print(r/100, entropy)
+        r=0
 env.close()
 
 
