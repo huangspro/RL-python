@@ -43,16 +43,17 @@ class Q(torch.nn.Module):
 
 Q_model = Q().to(device)
 #Q_model = torch.load("river/model.pth", weights_only=False).to(device)
+optimizer = torch.optim.Adam(Q_model.parameters(), lr=learning_ratio)
 def take_action(s):
     a = random.random()
     if a>greedy:
-        return random.randint(0, 6)
-    else:
         actions = [i for i in range(18)]
         output = []
         for action in actions:
             output.append(Q_model(s, action).detach()[0].squeeze())
-        return actions[output.index(max(output))]     
+        return actions[output.index(max(output))] 
+    else:
+        return random.randint(0, 6)
 
 def find_max(s):
     actions = [i for i in range(18)]
@@ -61,9 +62,9 @@ def find_max(s):
         output.append(Q_model(s, action).detach()[0].squeeze())
     return max(output)
         
-env = gym.make("ALE/Riverraid-v5", render_mode='human')
+env = gym.make("ALE/Riverraid-v5", render_mode=None)
 observation, _ = env.reset()
-greedy = 0.1
+
 for i in range(1):
     episode_over = False
     rr = 0
@@ -75,21 +76,19 @@ for i in range(1):
         new_observation, reward, terminated, truncated, _ = env.step(action)
         rr += reward
         
-        old_q.backward()
-        
         #update
         episode_over = terminated or truncated
         # if episode is over
         if episode_over:
             observation, _ = env.reset()
         # if the episode is not over
-        else:
-             with torch.no_grad():
-                for p in Q_model.parameters():
-                    p += learning_ratio*(reward - find_max(new_observation) - old_q)*p.grad
-                    p.grad.zero_()
+        with torch.no_grad():
+            target = reward + discounted * find_max(new_observation)
+        loss = (old_q - target)**2
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
         observation = new_observation
-        
     greedy -= 0.03
     torch.save(Q_model, "river/model.pth")
     print(rr)

@@ -10,16 +10,16 @@ import torch
 import ale_py
 
 greedy = 0.8
-learning_ratio = 0.001
+learning_ratio = 0.0001
 discounted = 0.99
 device = torch.device('cuda')
 class Q(torch.nn.Module):
     def __init__(self):
         super().__init__()
         #state
-        self.conv1 = torch.nn.Conv2d(3, 3, kernel_size=10, stride=10, padding=0)
+        self.conv1 = torch.nn.Conv2d(3, 3, kernel_size=3, stride=1, padding=1)
         self.conv2 = torch.nn.Conv2d(3, 1, kernel_size=3, stride=1, padding=1)
-        self.linear1 = torch.nn.Linear(21*16, 150)
+        self.linear1 = torch.nn.Linear(210*160, 150)
         self.linear2 = torch.nn.Linear(150, 100)
         # combine
         self.linear3 = torch.nn.Linear(101, 36)
@@ -41,18 +41,19 @@ class Q(torch.nn.Module):
         
         return x
 
-#Q_model = Q().to(device)
-Q_model = torch.load("assault/model.pth", weights_only=False).to(device)
+Q_model = Q().to(device)
+#Q_model = torch.load("assault/model.pth", weights_only=False).to(device)
+optimizer = torch.optim.Adam(Q_model.parameters(), lr=learning_ratio)
 def take_action(s):
     a = random.random()
     if a>greedy:
-        return random.randint(0, 6)
-    else:
         actions = [0,1,2,3,4,5,6]
         output = []
         for action in actions:
             output.append(Q_model(s, action).detach()[0].squeeze())
         return actions[output.index(max(output))]     
+    else:
+        return random.randint(0, 6)
 
 def find_max(s):
     actions = [0,1,2,3,4,5,6]
@@ -61,10 +62,10 @@ def find_max(s):
         output.append(Q_model(s, action).detach()[0].squeeze())
     return max(output)
         
-env = gym.make("ALE/Assault-v5", render_mode='human')
+env = gym.make("ALE/Assault-v5", render_mode=None)
 observation, _ = env.reset()
-greedy = 0.1
-for i in range(1):
+
+for i in range(50):
     episode_over = False
     rr = 0
     epoch = 0
@@ -75,21 +76,19 @@ for i in range(1):
         new_observation, reward, terminated, truncated, _ = env.step(action)
         rr += reward
         
-        old_q.backward()
-        
         #update
         episode_over = terminated or truncated
         # if episode is over
         if episode_over:
             observation, _ = env.reset()
         # if the episode is not over
-        else:
-             with torch.no_grad():
-                for p in Q_model.parameters():
-                    p += learning_ratio*(reward - find_max(new_observation) - old_q)*p.grad
-                    p.grad.zero_()
+        with torch.no_grad():
+            target = reward + discounted * find_max(new_observation)
+        loss = (old_q - target)**2
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
         observation = new_observation
-        
     greedy -= 0.03
     torch.save(Q_model, "assault/model.pth")
     print(rr)
