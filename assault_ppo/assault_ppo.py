@@ -8,6 +8,7 @@ import random
 import os
 import numpy
 import torch
+from torch.distributions.categorical import Categorical
 
 greedy = 0
 learning_ratio = 0.0001
@@ -28,7 +29,7 @@ class AC(torch.nn.Module):
         self.critic2 = torch.nn.Linear(256, 1)
         
     def forward(self, state):  
-        state = torch.tensor(state, dtype=torch.float32).permute(2,0,1).unsqueeze(0).to(device)
+        state = torch.tensor(state/255, dtype=torch.float32).permute(2,0,1).unsqueeze(0).to(device)
         s = torch.nn.functional.relu(self.conv1(state))
         s = torch.nn.functional.max_pool2d(s, kernel_size = 2, stride = 2)
         s = torch.nn.functional.relu(self.conv2(state))
@@ -40,12 +41,21 @@ class AC(torch.nn.Module):
         s = torch.nn.functional.relu(self.shared(s))
         #actor
         A = torch.nn.functional.relu(self.actor1(s))
-        A = torch.nn.functional.relu(self.actor2(s))
+        A = torch.nn.functional.softmax(self.actor2(s)) # output a probablity distribution
         #critic
         C = torch.nn.functional.relu(self.critic1(x))
-        C = self.critic2(x)
+        C = self.critic2(x) # output the state value
         
-        return A, C
+        # build up a distribution of actions
+        dist = Categorical(logits=A)
+        # sample from the distribution
+        action = dist.sample()
+        # calculate the probability of choosing the current action
+        prob = dist.log_prob(action)
+        #calculate out the entropy of the distributiob
+        entropy = dist.entropy()
+        
+        return action, prob, entropy, C
         
 AC_model = AC().to(device)
 AC_model = torch.load("assault/model.pth", weights_only=False).to(device)
