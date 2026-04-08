@@ -7,10 +7,9 @@ import pickle, random, os, numpy, torch
 import ale_py
 from torch.distributions.categorical import Categorical
 
-greedy = 0
-learning_ratio = 0.0001
+learning_ratio = 0.001
 discounted = 0.99
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 class AC(torch.nn.Module):
     def __init__(self):
@@ -38,15 +37,15 @@ class AC(torch.nn.Module):
         
         s = s.flatten(start_dim=1)
         s = torch.nn.functional.relu(self.shared(s))
-        #actor
+        # actor
         A = torch.nn.functional.relu(self.actor1(s))
         A = torch.nn.functional.softmax(self.actor2(A), dim=-1) # output a probablity distribution
-        #critic
+        # critic
         C = torch.nn.functional.relu(self.critic1(s))
         C = self.critic2(C) # output the state value
         
         # build up a distribution of actions
-        dist = Categorical(logits=A)
+        dist = Categorical(probs=A)
         # sample from the distribution
         action = dist.sample()
         # calculate the probability of choosing the current action
@@ -56,75 +55,83 @@ class AC(torch.nn.Module):
         
         return action.detach().cpu().numpy(), prob, entropy.detach(), C
         
-AC_model = AC().to(device)
-#AC_model = torch.load("assault/model.pth", weights_only=False).to(device)
+#AC_model = AC().to(device)
+AC_model = torch.load("model/model.pth", weights_only=False).to(device)
 optimizer = torch.optim.Adam(AC_model.parameters(), lr=learning_ratio)
 
 
 
 
 def collect(number_of_states):
+    # number_of_states is the maximum number of state expected
     observations = [0]*number_of_states
-    dones = torch.zeros(number_of_states).to(device)
     rewards = torch.zeros(number_of_states).to(device)
     values = torch.zeros(number_of_states).to(device)
     actions = [0]*number_of_states
     action_probs = torch.zeros(number_of_states).to(device)
+    # calculate the advantage function
     Advantages = torch.zeros(number_of_states).to(device)
     A = 0
     
-    env = gym.make("ALE/Assault-v5", render_mode=None)
+    env = gym.make("ALE/Assault-v5", render_mode='human')
     observation = env.reset()[0]
-    
-    #collect states information
+
+    # collect states information
     for i in range(number_of_states):
         observations[i] = observation
         # get action, action_prob, value
         actions[i], action_probs[i], _, values[i] = AC_model(observation)
         # get reward, done
-        print(actions[i])
-        next_observation, reward, done, _ = env.step(actions[i])
+        next_observation, reward, a, b, _= env.step(int(actions[i][0]))
         rewards[i] = torch.tensor(reward, dtype=torch.float32).to(device)
-        dones[i] = torch.tensor(done, dtype=torch.float32).to(device)
-        if dones[i]:
+        if a or b:
             break
         else:
             observation = next_observation
-            
-    #calculate the advantages value
-    Number = len(observation)
+    env.close()
+                    
+    # calculate the advantages value, from back to begini
+    Number = i + 1  # return Number
     with torch.no_grad():
-        for i in range(Number):
-            Advantages[Number - 1 - i] = A
-            if Number-1-i != 0:
-                A = discounted*A + discounted*values[i] - values[i-1] + rewards[i-1]
-            
-    return observations, dones, rewards, values, actions, action_probs, Advantages
+        for t in reversed(range(Number)):
+            delta = rewards[t] + discounted * (values[t+1] if t+1 < Number else 0) - values[t]
+            A = delta + discounted * A
+            Advantages[t] = A
+    
+    # output the number of practical number of states, and clip them
+    return Number, observations[:Number], rewards[:Number], values.detach()[:Number], actions[:Number], action_probs.detach()[:Number], Advantages.detach()[:Number]
 
 
 
 
 def train(collection):
-    for k in range(10):
-        new_action_probs = torch.zeros(len(collection)).to(device)
-        new_value = torch.zeros(len(collection)).to(device)
-        new_entropy = torch.zeros(len(collection)).to(device)
-        for id,(observation, done, reward, value, action, action_prob, Advantage) in enumerate(collection):
-            _,new_action_probs[id],new_entropy[id],new_value[id] = AC_model(observation)
+    for k in range(10):     
+        Number, observations, rewards, values, actions, action_probs, Advantages = collection
+        # create new actions and values
+        new_action_probs = torch.zeros(Number).to(device)
+        new_value = torch.zeros(Number).to(device)
+        new_entropy = torch.zeros(Number).to(device)
         
-        rt = new_action_probs/collection[5]
-        com1 = torch.clamp(rt, 1-0.2, 1+0.2)*collection[6]
-        com2 = rt*collection[6]
+        for id in range(Number):
+            _,new_action_probs[id],new_entropy[id],new_value[id] = AC_model(observations[id])
+        
+        rt = torch.exp(new_action_probs - action_probs)
+        com1 = torch.clamp(rt, 1-0.2, 1+0.2)*Advantages
+        com2 = rt*Advantages
         loss_actor = torch.min(com1, com2).mean()
-        loss_critic = torch.mse(new_value - collection[3])
-        Loss = -loss_actor + 0.5*loss_critic - 0.05*new_entropy.mean()
+        loss_critic = torch.mean((new_value - rewards)**2)
+        Loss = -loss_actor + 0.5*loss_critic - 0.5*new_entropy.mean()
         
         optimizer.zero_grad()
         Loss.backward()
         optimizer.step()
-    
-for i in range(5):
-    collection = collect(50)
-    print(torch.sum(collection[2]))
+        
+        print(f"\t {k}, Loss: {Loss}")
+        
+        torch.save(AC_model, "model/model.pth")
+for i in range(30):
+    collection = collect(800)
+    print("frames: ", collection[0])
+    print("reward: ", sum(collection[2]).item())
     train(collection)
     
