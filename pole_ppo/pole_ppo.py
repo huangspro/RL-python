@@ -1,5 +1,5 @@
 '''
-using ppo to solve assault problem
+using ppo to solve pole problem
 '''
 
 import gymnasium as gym
@@ -7,36 +7,24 @@ import pickle, random, os, numpy, torch
 import ale_py
 from torch.distributions.categorical import Categorical
 
-learning_ratio = 3e-4
+learning_ratio = 1e-4
 discounted = 0.99
 device = torch.device('cuda')
 
 class AC(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = torch.nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = torch.nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1)
-        self.conv3 = torch.nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1)
+        self.shared = torch.nn.Linear(4, 32)
         
-        self.shared = torch.nn.Linear(520, 512)
-        
-        self.actor1 = torch.nn.Linear(512, 256)
-        self.actor2 = torch.nn.Linear(256, 7)
-        self.critic1 = torch.nn.Linear(512, 256)
-        self.critic2 = torch.nn.Linear(256, 1)
+        self.actor1 = torch.nn.Linear(32, 32)
+        self.actor2 = torch.nn.Linear(32, 2)
+        self.critic1 = torch.nn.Linear(32, 32)
+        self.critic2 = torch.nn.Linear(32, 1)
         
     def forward(self, state, Action=None):  
-        state = torch.tensor(state/255, dtype=torch.float32).permute(2,0,1).unsqueeze(0).to(device)
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
         
-        s = torch.nn.functional.relu(self.conv1(state))
-        s = torch.nn.functional.max_pool2d(s, kernel_size = 2, stride = 2)
-        s = torch.nn.functional.relu(self.conv2(s))
-        s = torch.nn.functional.max_pool2d(s, kernel_size = 2, stride = 2)
-        s = torch.nn.functional.relu(self.conv3(s))
-        s = torch.nn.functional.max_pool2d(s, kernel_size = 2, stride = 2)
-        
-        s = s.flatten(start_dim=1)
-        s = torch.nn.functional.relu(self.shared(s))
+        s = torch.nn.functional.relu(self.shared(state))
         # actor
         A = torch.nn.functional.relu(self.actor1(s))
         A = torch.nn.functional.softmax(self.actor2(A), dim=-1) # output a probablity distribution
@@ -50,7 +38,7 @@ class AC(torch.nn.Module):
         action = dist.sample()
         # calculate the probability of choosing the current action
         if Action!=None:
-            prob = dist.log_prob(torch.tensor(Action, dtype=torch.long).to(device))
+            prob = dist.log_prob(torch.tensor(Action, dtype=torch.float32).to(device))
         else:
             prob = dist.log_prob(action)
         #calculate out the entropy of the distributiob
@@ -58,8 +46,8 @@ class AC(torch.nn.Module):
         
         return action.detach().cpu().numpy(), prob, entropy.detach(), C
         
-AC_model = AC().to(device)
-#AC_model = torch.load("model/model.pth", weights_only=False).to(device)
+#AC_model = AC().to(device)
+AC_model = torch.load("model/model.pth", weights_only=False).to(device)
 optimizer = torch.optim.Adam(AC_model.parameters(), lr=learning_ratio)
 
 
@@ -76,7 +64,7 @@ def collect(number_of_states):
     Advantages = torch.zeros(number_of_states).to(device)
     A = 0
     
-    env = gym.make("ALE/Assault-v5", render_mode=None)
+    env = gym.make("CartPole-v1", render_mode='human')
     observation = env.reset()[0]
 
     # collect states information
@@ -108,7 +96,7 @@ def collect(number_of_states):
 
 
 def train(collection):
-    for k in range(10):     
+    for k in range(5):     
         Number, observations, rewards, values, actions, action_probs, Advantages = collection
         # create new actions and values
         new_action_probs = torch.zeros(Number).to(device)
@@ -131,11 +119,11 @@ def train(collection):
         Loss.backward()
         optimizer.step()
         
-        print(f"\t {k}, Loss: {Loss}")
+        #print(f"\t {k}, Loss: {Loss}")
         
         torch.save(AC_model, "model/model.pth")
-for i in range(30):
-    collection = collect(500)
+for i in range(10):
+    collection = collect(100)
     print("frames: ", collection[0])
     print("reward: ", sum(collection[2]).item())
     train(collection)
