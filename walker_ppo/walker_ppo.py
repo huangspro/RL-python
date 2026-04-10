@@ -5,44 +5,47 @@ using ppo to solve pole problem
 import gymnasium as gym
 import pickle, random, os, numpy, torch
 import ale_py
-from torch.distributions.categorical import Categorical
+from torch.distributions import Categorical, Normal
 
-learning_ratio = 4e-5
+learning_ratio = 3e-4
 discounted = 0.99
 device = torch.device('cuda')
 
 class AC(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.shared1 = torch.nn.Linear(8, 128)
+        self.shared1 = torch.nn.Linear(17, 128)
         self.shared2 = torch.nn.Linear(128, 256)
         self.shared3 = torch.nn.Linear(256, 128)
         
-        self.actor1 = torch.nn.Linear(128, 4)
+        self.actor1 = torch.nn.Linear(128, 6)
         self.critic1 = torch.nn.Linear(128, 1)
         
-    def forward(self, state, Action=None):  
+        
+    def forward(self, state, Action=1):  
         state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
         
         s = torch.nn.functional.relu(self.shared1(state))
         s = torch.nn.functional.relu(self.shared2(s))
         s = torch.nn.functional.relu(self.shared3(s))
+        
         # actor
         A = torch.nn.functional.softmax(self.actor1(s), dim=-1) # output a probablity distribution
+
         # critic
         C = torch.nn.functional.relu(self.critic1(s)) # output the state value
         
         # build up a distribution of actions
-        dist = Categorical(probs=A)
+        dist = Normal(A, 1)
         # sample from the distribution
-        action = dist.sample()
+        action = dist.rsample()
         # calculate the probability of choosing the current action
-        if Action!=None:
-            prob = dist.log_prob(torch.tensor(Action, dtype=torch.float32).to(device))
+        if isinstance(Action, int):
+            prob = dist.log_prob(torch.tensor(Action, dtype=torch.float32).to(device)).sum(dim=-1)
         else:
-            prob = dist.log_prob(action)
+            prob = dist.log_prob(action).sum(dim=-1)
         #calculate out the entropy of the distributiob
-        entropy = dist.entropy()
+        entropy = dist.entropy().sum(dim=-1)
         
         return action.detach().cpu().numpy(), prob, entropy.detach(), C
         
@@ -64,7 +67,7 @@ def collect(number_of_states):
     Advantages = torch.zeros(number_of_states).to(device)
     A = 0
     
-    env = gym.make("LunarLander-v3", render_mode='None')
+    env = gym.make("Walker2d-v5", render_mode='human')
     observation = env.reset()[0]
 
     # collect states information
@@ -73,7 +76,7 @@ def collect(number_of_states):
         # get action, action_prob, value
         actions[i], action_probs[i], _, values[i] = AC_model(observation)
         # get reward, done
-        next_observation, reward, a, b, _= env.step(int(actions[i][0]))
+        next_observation, reward, a, b, _= env.step(actions[i][0])
         rewards[i] = torch.tensor(reward, dtype=torch.float32).to(device)
         if a or b:
             break
@@ -96,7 +99,7 @@ def collect(number_of_states):
 
 
 def train(collection):
-    for k in range(3):     
+    for k in range(7):     
         Number, observations, rewards, values, actions, action_probs, Advantages = collection
         # create new actions and values
         new_action_probs = torch.zeros(Number).to(device)
@@ -122,9 +125,8 @@ def train(collection):
         #print(f"\t {k}, Loss: {Loss}")
         
         torch.save(AC_model, "model/model.pth")
-        
-for i in range(2000):
-    collection = collect(800)
+for i in range(10):
+    collection = collect(200)
     print("frames: ", collection[0])
     print("reward: ", sum(collection[2]).item())
     train(collection)
